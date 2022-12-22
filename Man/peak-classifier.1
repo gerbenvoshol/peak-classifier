@@ -1,0 +1,115 @@
+.TH PEAK-CLASSIFIER 1
+.SH NAME    \" Section header
+.PP
+
+PEAK-CLASSIFIER \- Classify peaks in a BED file according to features in
+a GFF
+
+.SH SYNOPSIS
+.PP
+.nf 
+.na 
+peak-classifier [--upstream-boundaries pos[,pos...]] \\
+    [--min-peak-overlap x.y] [--min-gff-overlap x.y] [--midpoints] \\
+    peaks.bed features.gff3 overlaps.tsv
+.ad
+.fi
+
+.SH "PURPOSE"
+
+.B Peak-classifier
+classifies all peaks in the given BED file according to features found in
+the provided GFF.  Peaks are typically called from ChIP/ATAC-Seq
+experiments using tools such as MACS2.
+
+.SH OPTIONS
+.TP
+\fB\-\-upstream-boundaries pos[,pos...]\fR
+Specify boundaries for possible promoter regions.  The list must be
+comma-separated and in ascending order.  The default is 1000,10000,100000,
+which causes peak-classifier to generate GFF features for 1-1000,
+1001-10000, and 10001-100000 bases upstream of TSS.
+
+.TP
+\fB\-\-min-peak-overlap x.y
+Specify the minimum overlap as a fraction of the peak.  This option is
+passed to bedtools -f.  The default is 1.0e-9, which indicates 1 base. 
+This option should be used with caution as peaks vary greatly in size.
+
+.TP
+\fB\-\-min-gff-overlap x.y
+Specify the minimum overlap as a fraction of the GFF feature.  This option is
+passed to bedtools -F.  The default is 1.0e-9, which indicates 1 base. 
+This flag must be used with caution, as GFF features vary in size from a
+few bases to millions.  Hence, the same fraction of different features can
+have wildly different meaning.
+
+.TP
+\fB\-\-min-either-overlap
+Indicates that meeting either the peak or the GFF feature overlap minimum
+qualifies as an overlap.  Otherwise, both minimums must be met.
+
+.TP
+\fB\-\-midpoints
+An overlap is reported only when the midpoint of a peak falls within a
+feature.  For fixed-size peaklets, the midpoint corresponds to the summit
+as long as two or more peaklets were not merged.  Whether or not the
+midpoint is the summit, the meaning of this location is questionable,
+especially if coverage is low.
+
+.SH "DESCRIPTION"
+
+Features include all those explicitly named in the GFF as well as introns,
+which are computed as regions between the given exons, and promoters which
+are regions just upstream of the TSS.
+
+By default, promoter regions are generated for 1-1000 bases, 1001-10000
+bases, and 10001-100000 bases upstream from TSS.
+
+After generating a BED file containing all GFF features + those generated,
+bedtools intersect is used to determine the overlaps.
+
+All overlaps between peaks and GFF features are reported in the output TSV
+(tab-separated values) file.  In many cases, a peak may overlap two or more
+adjacent features, in which case one line of output is generated for each
+overlap.
+
+The output file contains the location of the
+peak in the first three columns, followed by the location, name, and strand
+of the GFF feature, and finally the number of bases of overlap
+between the two.  The file does not conform to any
+standard format, though the first three columns follow BED file format and
+the 4th and 5th columns use BED coordinates (0-based, end coordinate is 1
+past the last base in the feature).
+
+.nf
+.na
+#Chr    P-start P-end   F-start F-end   F-name  Strand  Overlap
+1       3119722 3120223 3043475 3133475 upstream100000  +       501
+1       3119722 3120223 3072238 3162238 upstream100000  +       501
+1       3121255 3121756 3043475 3133475 upstream100000  +       501
+1       3121255 3121756 3072238 3162238 upstream100000  +       501
+1       3167069 3167570 3162238 3171238 upstream10000   +       501
+1       3203860 3204361 -1      -1      intergenic      .       501
+1       3292373 3293369 3222979 3312979 upstream100000  +       996
+1       3292373 3293369 3276123 3741721 gene    -       996
+1       3292373 3293369 3284704 3741721 mRNA    -       996
+1       3292373 3293369 3287191 3491924 intron  -       996
+1       3297187 3297998 3222979 3312979 upstream100000  +       811
+.fi
+
+Output can be further processed by
+.B filter-overlaps(1)
+to gather information on features of interest.
+
+.SH "SEE ALSO"
+filter-overlaps(1), feature-view(1), bedtools, MACS2, DESeq2
+
+.SH BUGS
+Please report bugs to the author and send patches in unified diff format.
+(man diff for more information)
+
+.SH AUTHOR
+.nf
+.na
+J. Bacon
