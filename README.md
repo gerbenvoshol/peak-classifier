@@ -3,7 +3,9 @@
 ## Description
 
 peak-classifier classify ChIP/ATAC-Seq peaks based on features provided in
-a GFF file.
+a GFF file. Based on [peak-classifier by Paul Auer](https://github.com/auerlab/peak-classifier)
+
+An excerpt from Pauls README:
 
 Peaks are provided in a BED file sorted by chromosome and position.  Typically
 these are output from a peak caller such as MACS2, or the differential
@@ -25,26 +27,11 @@ In contrast, peak-classifier is a simple Unix command that takes a BED file
 and a GFF file as inputs and reports all peak classifications in a matter of
 seconds.
 
-Admittedly, an optimal C program isn't really necessary to solve this problem,
-since the crappiest implementation I can imagine would not take more than
-hours to run for a typical ATAC-Seq peak set.  However:
+## Differences compared to Pauls version
 
-    * It's an opportunity to develop and test biolibc code that will be
-      useful for other problems and bigger data
-    * It's more about making peak classification convenient than fast
-    * It never hurts to hone your C skills
-    * There's no such thing as a program that's too fast
-
-## Design and Implementation
-
-The code is organized following basic object-oriented design principals, but
-implemented in C to minimize overhead and keep the source code accessible to
-scientists who don't have time to master the complexities of C++.
-
-Structures are treated as classes, with accessor macros and mutator functions
-provided, so dependent applications and libraries need not access
-structure members directly.  Since the C language cannot enforce this, it's
-up to application programmers to exercise self-discipline.
+* Amalgamated libxtend and biolibc for easier build
+* Add feature name and IDs to the feature type ouput
+* Add optional argument to bedtools location
 
 ## Building and installing
 
