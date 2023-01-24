@@ -45,6 +45,7 @@ int     main(int argc,char *argv[])
 	    augmented_filename[PATH_MAX + 1],
 	    sorted_filename[PATH_MAX + 1],
 	    *sort;
+	char *bedtools = "bedtools"; // location to bedtools binairy (used for intersect)
     bool    midpoints_only = false;
     bl_bed_t   bed_feature;
     struct stat     file_info;
@@ -81,6 +82,10 @@ int     main(int argc,char *argv[])
 	    min_overlap_flags = "-e";
 	else if ( strcmp(argv[c], "--midpoints") == 0 )
 	    midpoints_only = true;
+	else if ( strcmp(argv[c], "--bedtools") == 0 )
+	{
+	    bedtools = argv[++c];
+	}
 	else
 	    usage(argv);
     }
@@ -180,13 +185,13 @@ int     main(int argc,char *argv[])
 	 
 	// Insert "set -x; " for debugging
 	snprintf(cmd, PEAK_CMD_MAX,
-		 "bedtools intersect -a - -b %s -f %g -F %g %s -wao"
+		 "%s intersect -a - -b %s -f %g -F %g %s -wao"
 		 "| awk 'BEGIN { OFS=IFS; } { if ( $8 == -1 ) "
 		    "$9 = \"upstream-beyond\"; $12 = $3 - $2; "
 		    "printf(\"%%s\\t%%d\\t%%d\\t%%d\\t%%d\\t"
-		    "%%s\\t%%s\\t%%s\\t%%s\\n\", "
-		    "$1, $2, $3, $7, $8, $9, $11, $12, $14); }' %s%s\n",
-		sorted_filename, min_peak_overlap, min_gff_overlap,
+		    "%%s\\t%%s\\t%%s\\n\", "
+		    "$1, $2, $3, $7, $8, $9, $11, $12); }' %s%s\n",
+		bedtools, sorted_filename, min_peak_overlap, min_gff_overlap,
 		min_overlap_flags, redirect_append, overlaps_filename);
 
 	if ( (intersect_pipe = popen(cmd, "w")) == NULL )
@@ -213,6 +218,58 @@ int     main(int argc,char *argv[])
     return status;
 }
 
+/***************************************************************************
+ *  Library:
+ *      #include <biolibc/gff.h>
+ *      -lbiolibc -lxtend
+ *
+ *  Description:
+ *      Copy GFF fields to a BED structure to the extent possible.  Since
+ *      GFF and BED files do not necessarily contain the same information,
+ *      some information may be lost or filled in with appropriate markers.
+ *
+ *  Arguments:
+ *      gff_feature  Pointer to the bl_gff_t structure to copy
+ *      bed_feature  Pointer to the bl_bed_t structure to receive data
+ *
+ *  See also:
+ *      bl_bed_read(3), bl_gff_read(3)
+ *
+ *  History: 
+ *  Date        Name        Modification
+ *  2021-04-19  Jason Bacon Begin
+ ***************************************************************************/
+
+void    bl_gff_to_bed2(bl_gff_t *gff_feature, bl_bed_t *bed_feature)
+
+{
+    char    name[BL_BED_NAME_MAX_CHARS + 1],
+	    strand = BL_GFF_STRAND(gff_feature);
+    
+    // Update this if/when more fields are converted
+    bl_bed_set_fields(bed_feature, 6);
+    bl_bed_set_score(bed_feature, 0);
+    
+    bl_bed_set_chrom_cpy(bed_feature, BL_GFF_SEQID(gff_feature), BL_CHROM_MAX_CHARS + 1);
+    /*
+     *  BED start is 0-based and inclusive
+     *  GFF is 1-based and inclusive
+     */
+    bl_bed_set_chrom_start(bed_feature, BL_GFF_START(gff_feature) - 1);
+    /*
+     *  BED end is 0-base and inclusive (or 1-based and non-inclusive)
+     *  GFF is the same
+     */
+    bl_bed_set_chrom_end(bed_feature, BL_GFF_END(gff_feature));
+    snprintf(name, BL_BED_NAME_MAX_CHARS + 1, "%s;%s;%s", BL_GFF_TYPE(gff_feature), BL_GFF_FEATURE_NAME(gff_feature), BL_GFF_FEATURE_ID(gff_feature));
+    bl_bed_set_name_cpy(bed_feature, name, BL_BED_NAME_MAX_CHARS + 1);
+    bl_bed_set_score(bed_feature, 0);  // FIXME: Take as arg?
+    if ( bl_bed_set_strand(bed_feature, strand) != BL_BED_DATA_OK )
+    {
+	fputs("bl_gff_to_bed(): bl_bed_set_strand() failed.\n", stderr);
+	exit(EX_DATAERR);
+    }
+}
 
 /***************************************************************************
  *  Description:
@@ -270,7 +327,7 @@ int     gff_augment(FILE *gff_stream, const char *upstream_boundaries,
 	    {
 		// Write out upstream regions for likely regulatory elements
 		strand = BL_GFF_STRAND(&gff_feature);
-		bl_gff_to_bed(&gff_feature, &bed_feature);
+		bl_gff_to_bed2(&gff_feature, &bed_feature);
 		bl_bed_write(&bed_feature, bed_stream, BL_BED_FIELD_ALL);
 		
 		if ( strand == '+' )
@@ -357,7 +414,7 @@ void    gff_process_subfeatures(FILE *gff_stream, FILE *bed_stream,
 		 *  GFF is the same
 		 */
 		bl_bed_set_chrom_end(&bed_feature, intron_end);
-		snprintf(name, BL_BED_NAME_MAX_CHARS, "intron");
+    	snprintf(name, BL_BED_NAME_MAX_CHARS + 1, "intron;%s;%s", BL_GFF_FEATURE_NAME(&subfeature), BL_GFF_FEATURE_ID(&subfeature));
 		bl_bed_set_name_cpy(&bed_feature, name, BL_BED_NAME_MAX_CHARS + 1);
 		bl_bed_write(&bed_feature, bed_stream, BL_BED_FIELD_ALL);
 	    }
@@ -365,8 +422,12 @@ void    gff_process_subfeatures(FILE *gff_stream, FILE *bed_stream,
 	    intron_start = BL_GFF_END(&subfeature);
 	    first_exon = false;
 	}
-	
-	bl_gff_to_bed(&subfeature, &bed_feature);
+   
+
+	bl_gff_to_bed2(&subfeature, &bed_feature);
+	//snprintf(name, BL_BED_NAME_MAX_CHARS + 1, "%s;%s;%s", BL_GFF_TYPE(&subfeature), BL_GFF_FEATURE_NAME(&subfeature), BL_GFF_FEATURE_ID(&subfeature));
+	//bl_bed_set_name_cpy(&bed_feature, name, BL_BED_NAME_MAX_CHARS + 1);
+
 	bl_bed_write(&bed_feature, bed_stream, BL_BED_FIELD_ALL);
     }
 }
@@ -395,43 +456,38 @@ void    generate_upstream_features(FILE *feature_stream,
 
     for (c = 0; c < BL_POS_LIST_COUNT(pos_list) - 1; ++c)
     {
-		bl_bed_set_fields(&bed_feature[c], 6);
-		bl_bed_set_strand(&bed_feature[c], strand);
-		bl_bed_set_chrom_cpy(&bed_feature[c], BL_GFF_SEQID(gff_feature),
-				     BL_CHROM_MAX_CHARS + 1);
-		/*
-		 *  BED start is 0-based and inclusive
-		 *  GFF is 1-based and inclusive
-		 *  BED end is 0-base and inclusive (or 1-based and non-inclusive)
-		 *  GFF is the same
-		 */
-		if ( strand == '+' )
-		{
-		    // Do not add negative coordinates!
-		    // TODO: Would be nicer to know the exact genome sizes to limit up and downstream areas
-		    if ((BL_GFF_START(gff_feature) - BL_POS_LIST_POSITIONS_AE(pos_list, c + 1) - 1) < 0) {
-		    	continue;
-		    }
-		    bl_bed_set_chrom_start(&bed_feature[c],
-				      BL_GFF_START(gff_feature) - 
-				      BL_POS_LIST_POSITIONS_AE(pos_list, c + 1) - 1);
-		    bl_bed_set_chrom_end(&bed_feature[c],
-				    BL_GFF_START(gff_feature) -
-				    BL_POS_LIST_POSITIONS_AE(pos_list, c) - 1);
-		}
-		else
-		{
-		    bl_bed_set_chrom_start(&bed_feature[c],
-				      BL_GFF_END(gff_feature) +
-				      BL_POS_LIST_POSITIONS_AE(pos_list, c));
-		    bl_bed_set_chrom_end(&bed_feature[c],
-				    BL_GFF_END(gff_feature) + 
-				    BL_POS_LIST_POSITIONS_AE(pos_list, c + 1));
-		}
-		
-		snprintf(name, BL_BED_NAME_MAX_CHARS, "upstream%" PRId64,
-			 BL_POS_LIST_POSITIONS_AE(pos_list, c + 1));
-		bl_bed_set_name_cpy(&bed_feature[c], name, BL_BED_NAME_MAX_CHARS + 1);
+	bl_bed_set_fields(&bed_feature[c], 6);
+	bl_bed_set_strand(&bed_feature[c], strand);
+	bl_bed_set_chrom_cpy(&bed_feature[c], BL_GFF_SEQID(gff_feature),
+			     BL_CHROM_MAX_CHARS + 1);
+	/*
+	 *  BED start is 0-based and inclusive
+	 *  GFF is 1-based and inclusive
+	 *  BED end is 0-base and inclusive (or 1-based and non-inclusive)
+	 *  GFF is the same
+	 */
+	if ( strand == '+' )
+	{
+	    bl_bed_set_chrom_start(&bed_feature[c],
+			      BL_GFF_START(gff_feature) - 
+			      BL_POS_LIST_POSITIONS_AE(pos_list, c + 1) - 1);
+	    bl_bed_set_chrom_end(&bed_feature[c],
+			    BL_GFF_START(gff_feature) -
+			    BL_POS_LIST_POSITIONS_AE(pos_list, c) - 1);
+	}
+	else
+	{
+	    bl_bed_set_chrom_start(&bed_feature[c],
+			      BL_GFF_END(gff_feature) +
+			      BL_POS_LIST_POSITIONS_AE(pos_list, c));
+	    bl_bed_set_chrom_end(&bed_feature[c],
+			    BL_GFF_END(gff_feature) + 
+			    BL_POS_LIST_POSITIONS_AE(pos_list, c + 1));
+	}
+    snprintf(name, BL_BED_NAME_MAX_CHARS + 1, "%s;%s;%s", BL_GFF_TYPE(gff_feature), BL_GFF_FEATURE_NAME(gff_feature), BL_GFF_FEATURE_ID(gff_feature));
+	
+	snprintf(name, BL_BED_NAME_MAX_CHARS, "upstream%li;%s;%s;%s", BL_POS_LIST_POSITIONS_AE(pos_list, c + 1), BL_GFF_TYPE(gff_feature), BL_GFF_FEATURE_NAME(gff_feature), BL_GFF_FEATURE_ID(gff_feature));
+	bl_bed_set_name_cpy(&bed_feature[c], name, BL_BED_NAME_MAX_CHARS + 1);
     }
     
     if ( strand == '-' )
@@ -460,7 +516,7 @@ void    usage(char *argv[])
 	  "upstream.  Peaks that do not overlap any of these or other features are\n"
 	  "reported as 'upstream-beyond.\n\n"
 	  "The minimum peak/gff overlap must range from 1.0e-9 (the default, which\n"
-	  "corresponds to a single base) to 1.0. These values are passed directlry to\n"
+	  "corresponds to a single base) to 1.0. These values are passed directly to\n"
 	  "bedtools intersect -f/-F.\n"
 	  "They must be used with great caution since the size of peaks and GFF\n"
 	  "features varies greatly.\n\n"
@@ -470,6 +526,7 @@ void    usage(char *argv[])
 	  "--midpoints indicates that we are only interested in which feature contains\n"
 	  "the midpoint of each peak.  This is the same as --min-peak-overlap 0.5\n"
 	  "in cases where half the peak is contained in a feature, but can also report\n"
-	  "overlaps with features too small to contain this much overlap.\n\n", stderr);
+	  "overlaps with features too small to contain this much overlap.\n\n"
+	  "--bedtools location of bedtools binairy (used for intersect) [default:bedtools]\n\n", stderr);
     exit(EX_USAGE);
 }
